@@ -2,6 +2,7 @@ const supertokens = require('supertokens-node');
 const Session = require('supertokens-node/recipe/session');
 const Passwordless = require('supertokens-node/recipe/passwordless');
 const logger = require('../utils/logger');
+const prisma = require('./db');
 
 const initializeSupertokens = () => {
     supertokens.init({
@@ -15,12 +16,43 @@ const initializeSupertokens = () => {
             apiDomain: process.env.BACKEND_URL,
             websiteDomain: process.env.FRONTEND_URL,
             apiBasePath: "/auth",
-            websiteBasePath: "/auth"
+            websiteBasePath: "/login"
         },
         recipeList: [
             Passwordless.init({
                 contactMethod: "PHONE",
                 flowType: "USER_INPUT_CODE",
+                override: {
+                    apis: (originalImplementation) => {
+                        return {
+                            ...originalImplementation,
+                            createCodePOST: async function (input) {
+                                const phoneNumber = input.phoneNumber;
+                                try {
+                                    const employee = await prisma.employee.findFirst({
+                                        where: { phoneNumber, isActive: true },
+                                        select: { id: true }
+                                    });
+
+                                    if (!employee) {
+                                        logger.warn({
+                                            event: 'OTP_BLOCKED',
+                                        }, 'OTP blocked — not an active employee');
+                                        return { status: "GENERAL_ERROR", message: "Access denied. Contact HR." };
+                                    }
+
+                                    return originalImplementation.createCodePOST(input);
+                                } catch (err) {
+                                    logger.error({
+                                        event: 'OTP_PRECHECK_DB_ERROR',
+                                        err,
+                                    }, 'DB error during OTP pre-check');
+                                    return { status: "GENERAL_ERROR", message: "Service unavailable. Please try again." };
+                                }
+                            }
+                        };
+                    }
+                },
                 smsDelivery: {
                     override: (originalImplementation) => {
                         return {

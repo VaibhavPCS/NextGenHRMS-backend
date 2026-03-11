@@ -1,5 +1,6 @@
 const supertokens = require('supertokens-node');
 const prisma = require('../config/db');
+const logger = require('../utils/logger');
 
 const linkUserToEmployee = async (supertokensId) => {
 
@@ -55,7 +56,10 @@ const linkUserToEmployee = async (supertokensId) => {
             await supertokens.deleteUser(supertokensId);
         } catch (deleteError) {
             // Log but don't let a failed cleanup block the 403 response
-            console.error("Failed to delete unrecognised SuperTokens user:", deleteError.message);
+            logger.error({
+                event: 'DELETE_UNRECOGNISED_USER_FAILED',
+                err: deleteError,
+            }, 'Failed to delete unrecognised SuperTokens user during NOT_ONBOARDED cleanup');
         }
         const err = new Error("You are not a registered employee.");
         err.code = 'NOT_ONBOARDED';
@@ -67,7 +71,10 @@ const linkUserToEmployee = async (supertokensId) => {
         try {
             await supertokens.deleteUser(supertokensId);
         } catch (deleteError) {
-            console.error("Failed to delete revoked employee's SuperTokens user:", deleteError.message);
+            logger.error({
+                event: 'DELETE_REVOKED_USER_FAILED',
+                err: deleteError,
+            }, "Failed to delete revoked employee's SuperTokens user during ACCESS_REVOKED cleanup");
         }
         const err = new Error("Your corporate access has been revoked. Please contact HR.");
         err.code = 'ACCESS_REVOKED';
@@ -76,6 +83,10 @@ const linkUserToEmployee = async (supertokensId) => {
 
     // Idempotency: already linked on a previous login — skip the DB write
     if (employee.supertokensId === supertokensId) {
+        logger.info({
+            event: 'SESSION_LINK_SKIPPED',
+            employeeId: employee.id,
+        }, 'Session already linked — idempotency check passed, skipping DB write');
         return employee;
     }
 

@@ -10,6 +10,7 @@ const traceMiddleware = require('./src/middleware/trace');
 const requestLogger = require('./src/middleware/requestLogger');
 const globalErrorHandler = require('./src/middleware/errorHandler');
 const authRoutes = require('./src/routes/auth.routes');
+const employeeRoutes = require('./src/routes/employee.routes');
 const prisma = require('./src/config/db');
 
 initializeSupertokens();
@@ -36,6 +37,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/hr', hrRoutes);
 app.use('/api/candidate', candidateRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/employee', employeeRoutes);
 
 app.use(errorHandler());        // SuperTokens error handler
 app.use(globalErrorHandler);    // Global fallback for any unhandled exception

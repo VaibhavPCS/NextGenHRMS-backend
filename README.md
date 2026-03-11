@@ -9,6 +9,7 @@ This document provides a comprehensive guide to the API endpoints and internal f
   - [HR Module](#hr-module)
   - [Candidate Module](#candidate-module)
 - [Services & Functions](#services--functions)
+- [Testing](#testing)
 - [Security & Validation](#security--validation)
 
 ---
@@ -124,6 +125,44 @@ Allows a candidate to submit their personal details and upload documents.
 
 ---
 
+### Employee Module
+
+#### Get Current Employee Profile
+
+**Endpoint:** `GET /api/employee/me`
+
+Fetches the profile of the currently logged-in employee, including their role and calculated permissions.
+
+- **Controller:** `src/controllers/employee.controller.js` -> `getMe`
+- **Service:** `src/services/employee.service.js` -> `getEmployeeProfile`
+- **Middleware:** `verifySession` (SuperTokens)
+
+- **Response Body:**
+  ```json
+  {
+    "id": "65e...",
+    "firstName": "Vaibhav",
+    "lastName": "Sharma",
+    "designation": "Software Engineer",
+    "email": "vaibhav@example.com",
+    "role": "HR Admin",
+    "permissions": ["DASHBOARD_VIEW", "EMPLOYEE_VIEW", "LEAVE_APPROVE"]
+  }
+  ```
+
+- **Logic:**
+  1.  **Authentication:** Validates the session cookie.
+  2.  **Fetch Profile:** Queries the database using the `supertokensId` from the session.
+  3.  **Permission Calculation:** Merges Role Permissions + Granted Permissions - Revoked Permissions.
+  4.  **Active Check:** Returns 403 if `isActive` is false.
+
+- **Responses:**
+  - `200 OK`: Profile retrieved successfully.
+  - `403 Forbidden`: Access revoked or not an active employee.
+  - `404 Not Found`: Employee record not found.
+
+---
+
 ### Employee Management Module
 
 #### Link User to Employee
@@ -171,6 +210,13 @@ Links a SuperTokens authenticated user (via OTP) to an existing Employee record 
     6.  **Cleanup:** Clears the `inviteToken` to prevent reuse.
   - **Returns:** The updated candidate object.
 
+### Employee Service (`src/services/employee.service.js`)
+
+- **`getEmployeeProfile(supertokensId)`**
+  - **Logic:** Fetches employee + role + permissions in a single query.
+  - **Calculations:** Computes effective permissions by applying per-user overrides (granted/revoked) on top of role-based permissions.
+  - **Security:** Checks `isActive` status before returning data.
+
 ### Auth Service (`src/services/auth.service.js`)
 
 - **`linkUserToEmployee(supertokensId)`**
@@ -193,6 +239,36 @@ Links a SuperTokens authenticated user (via OTP) to an existing Employee record 
     - **Rotation:** Files rotate daily or when size exceeds 10MB.
     - **Redaction:** Sensitive PII (Aadhar, PAN, Passwords, Tokens) is automatically redacted from logs.
     - **Development Mode:** Pretty-prints logs to the console using `pino-pretty`.
+
+---
+
+## Testing
+
+The backend includes unit tests for core services (Auth, Employee, HR) to ensure reliability.
+
+### Running Tests
+
+To run the test suite:
+
+```bash
+npm test
+```
+
+To run tests in watch mode during development:
+
+```bash
+npm run test:watch
+```
+
+### Test Structure
+
+-   **Location:** `src/__tests__/`
+-   **Framework:** Jest
+-   **Coverage:**
+    -   **Auth Service:** Tests user linking, duplicate checks, and error handling.
+    -   **Employee Service:** Tests profile fetching, permission calculation, and active status checks.
+    -   **HR Service:** Tests candidate staging logic.
+-   **Methodology:** Dependencies like Prisma, SuperTokens, and Logger are mocked to isolate the service logic.
 
 ---
 

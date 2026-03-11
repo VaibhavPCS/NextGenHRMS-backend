@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const logger = require('./logger');
 
 const ALGORITHM = process.env.ALGORITHM;
 const ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY, 'hex'); 
@@ -27,7 +28,12 @@ const decryptPII = (encryptedData) => {
         decrypted += decipher.final('utf8');
         return decrypted;
     } catch (error) {
-        console.error("CRITICAL: PII Decryption/Tamper Failure!");
+        // This fires if the ciphertext was tampered with or the key changed
+        // AES-GCM auth tag verification will throw if data integrity is compromised
+        logger.error({
+            event: 'PII_DECRYPTION_FAILURE',
+            err: error,
+        }, 'CRITICAL: PII decryption failed — data may be tampered or encryption key mismatch');
         return "DATA_CORRUPTED_OR_TAMPERED";
     }
 };
