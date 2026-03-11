@@ -9,6 +9,8 @@ const logger = require('./src/utils/logger');
 const traceMiddleware = require('./src/middleware/trace');
 const requestLogger = require('./src/middleware/requestLogger');
 const globalErrorHandler = require('./src/middleware/errorHandler');
+const authRoutes = require('./src/routes/auth.routes');
+const prisma = require('./src/config/db');
 
 initializeSupertokens();
 
@@ -33,10 +35,28 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/hr', hrRoutes);
 app.use('/api/candidate', candidateRoutes);
+app.use('/api/auth', authRoutes);
 
 app.use(errorHandler());        // SuperTokens error handler
 app.use(globalErrorHandler);    // Global fallback for any unhandled exception
 
-app.listen(PORT, () => {
+// Hold a reference to the server so we can close it cleanly on shutdown
+const server = app.listen(PORT, () => {
     logger.info({ event: 'SERVER_START', port: PORT }, `NextGenHRMS Backend running on port ${PORT}`);
 });
+
+// Graceful shutdown — critical for Docker/Kubernetes
+// SIGTERM: sent by K8s/Docker before stopping the container
+// SIGINT: sent when you press Ctrl+C locally
+const shutdown = async (signal) => {
+    logger.info({ event: 'SHUTDOWN_INITIATED', signal }, 'Graceful shutdown started');
+
+    server.close(async () => {
+        await prisma.$disconnect();
+        logger.info({ event: 'SHUTDOWN_COMPLETE' }, 'HTTP server closed, Prisma disconnected');
+        process.exit(0);
+    });
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));

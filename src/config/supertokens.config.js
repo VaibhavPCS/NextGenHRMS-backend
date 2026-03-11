@@ -1,12 +1,14 @@
 const supertokens = require('supertokens-node');
 const Session = require('supertokens-node/recipe/session');
 const Passwordless = require('supertokens-node/recipe/passwordless');
+const logger = require('../utils/logger');
 
 const initializeSupertokens = () => {
     supertokens.init({
         framework: "express",
         supertokens: {
-            connectionURI: "http://127.0.0.1:3567",
+            // Use env var so this works in Docker/staging/prod without code changes
+            connectionURI: process.env.SUPERTOKENS_URI || "http://127.0.0.1:3567",
         },
         appInfo: {
             appName: "NextGenHRMS",
@@ -19,70 +21,48 @@ const initializeSupertokens = () => {
             Passwordless.init({
                 contactMethod: "PHONE",
                 flowType: "USER_INPUT_CODE",
-                override: {
-                    apis: (originalImplementation) => {
-                        return {
-                            ...originalImplementation,
-                            consumeCodePOST: async (input) => {
-                                const result = await originalImplementation.consumeCodePOST(input);
-
-                                if (result.status === "INCORRECT_USER_INPUT_CODE_ERROR") {
-                                    input.options.res.setStatusCode(401);
-                                    input.options.res.sendJSONResponse({
-                                        status: "INCORRECT_USER_INPUT_CODE_ERROR",
-                                        error: "Incorrect OTP. Please try again.",
-                                        failedCodeInputAttemptCount: result.failedCodeInputAttemptCount,
-                                        maximumCodeInputAttempts: result.maximumCodeInputAttempts,
-                                    });
-                                    return result;
-                                }
-
-                                if (result.status === "EXPIRED_USER_INPUT_CODE_ERROR") {
-                                    input.options.res.setStatusCode(401);
-                                    input.options.res.sendJSONResponse({
-                                        status: "EXPIRED_USER_INPUT_CODE_ERROR",
-                                        error: "OTP has expired. Please request a new one.",
-                                    });
-                                    return result;
-                                }
-
-                                if (result.status === "RESTART_FLOW_ERROR") {
-                                    input.options.res.setStatusCode(400);
-                                    input.options.res.sendJSONResponse({
-                                        status: "RESTART_FLOW_ERROR",
-                                        error: "Session expired or OTP attempts exhausted. Please request a new OTP.",
-                                    });
-                                    return result;
-                                }
-
-                                return result;
-                            },
-                        };
-                    },
-                },
                 smsDelivery: {
                     override: (originalImplementation) => {
                         return {
                             ...originalImplementation,
                             sendSms: async function (input) {
-                                const mobile = input.phoneNumber;
-                                const otp = input.userInputCode; 
                                 const apiKey = process.env.TWO_FACTOR_API_KEY;
-                                const url = `https://2factor.in/API/V1/${apiKey}/SMS/${mobile}/${otp}/OTP SEND`;
-                                
+
+                                // encodeURIComponent converts +91XXXXXXXXXX → %2B91XXXXXXXXXX
+                                // OTP%20SEND encodes the space — raw spaces throw TypeError in fetch
+                                const encodedMobile = encodeURIComponent(input.phoneNumber);
+                                const url = `https://2factor.in/API/V1/${apiKey}/SMS/${encodedMobile}/${input.userInputCode}/OTP%20SEND`;
+
                                 try {
                                     const response = await fetch(url);
+
+                                    // Always check response.ok before parsing JSON
+                                    if (!response.ok) {
+                                        logger.error({
+                                            event: 'SMS_GATEWAY_HTTP_ERROR',
+                                            status: response.status,
+                                        }, '2Factor API returned non-2xx status');
+                                        return;
+                                    }
+
                                     const data = await response.json();
+
                                     if (data.Status === "Success") {
-                                        console.log("SMS sent successfully");
+                                        logger.info({ event: 'SMS_SENT' }, 'OTP SMS dispatched successfully');
                                     } else {
-                                        console.error("2Factor API Rejected it:", data.Details);
+                                        logger.error({
+                                            event: 'SMS_GATEWAY_REJECTED',
+                                            details: data.Details,
+                                        }, '2Factor API rejected the SMS request');
                                     }
                                 } catch (error) {
-                                    console.error("Network Error hitting 2Factor API:", error);
+                                    logger.error({
+                                        event: 'SMS_GATEWAY_NETWORK_ERROR',
+                                        err: error,
+                                    }, 'Network error reaching 2Factor API');
                                 }
                             }
-                        }
+                        };
                     }
                 }
             }),

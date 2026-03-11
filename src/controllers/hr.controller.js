@@ -49,8 +49,6 @@ const inviteCandidate = async (req, res) => {
         const { token, candidateId } = await hrService.stageCandidate(personalEmail, firstName, lastName, phoneNumber);
         const magicLink = `${process.env.FRONTEND_URL}/onboard?token=${token}`;
 
-        // candidateId is the DB record ID — NOT email/phone (those are PII)
-        // Support team: copy this ID from Grafana → paste in admin dashboard → get contact info
         logger.info({
             correlationId: req.correlationId,
             candidateId,
@@ -64,24 +62,25 @@ const inviteCandidate = async (req, res) => {
         });
 
     } catch (error) {
-        if (error.message === 'CANDIDATE_ALREADY_ONBOARDED') {
+        // Use error.code — not error.message — for robust error type matching
+        if (error.code === 'CANDIDATE_ALREADY_ONBOARDED') {
             logger.warn({
                 correlationId: req.correlationId,
-                reason: 'CANDIDATE_ALREADY_ONBOARDED',
+                reason: error.code,
             }, 'Invite rejected — candidate already onboarded');
             return res.status(409).json({
-                error: 'This candidate has already completed onboarding.',
+                error: error.message,
                 supportCode: req.correlationId,
             });
         }
 
-        if (error.message === 'ACTIVE_INVITE_EXISTS') {
+        if (error.code === 'ACTIVE_INVITE_EXISTS') {
             logger.warn({
                 correlationId: req.correlationId,
-                reason: 'ACTIVE_INVITE_EXISTS',
+                reason: error.code,
             }, 'Invite rejected — active invite already exists');
             return res.status(409).json({
-                error: 'An active invite already exists for this candidate. Wait for it to expire before re-inviting.',
+                error: error.message,
                 supportCode: req.correlationId,
             });
         }

@@ -124,6 +124,30 @@ Allows a candidate to submit their personal details and upload documents.
 
 ---
 
+### Employee Management Module
+
+#### Link User to Employee
+
+**Endpoint:** `POST /api/auth/link-employee`
+
+Links a SuperTokens authenticated user (via OTP) to an existing Employee record in the database.
+
+- **Controller:** `src/controllers/auth.controller.js` -> `linkUserToEmployeeController`
+- **Service:** `src/services/auth.service.js` -> `linkUserToEmployee`
+
+- **Logic:**
+  1.  **Extract Phone Number:** Retrieves the verified phone number directly from the SuperTokens session.
+  2.  **Find Employee:** Searches the `Employee` table for a matching phone number.
+  3.  **Active Check:** Verifies that `isActive` is `true`. Terminated employees are blocked immediately.
+  4.  **Link ID:** Updates the `Employee` record with the `supertokensId` to bind the auth session to the business data.
+
+- **Responses:**
+  - `200 OK`: Link successful, returns employee details.
+  - `403 Forbidden`: User is not a registered employee OR access has been revoked (`isActive: false`).
+  - `500 Internal Server Error`: Database or SuperTokens error.
+
+---
+
 ## Services & Functions
 
 ### HR Service (`src/services/hr.service.js`)
@@ -146,6 +170,12 @@ Allows a candidate to submit their personal details and upload documents.
     5.  **Update:** Updates the candidate record with encrypted data, file URLs, and sets status to `DOCS_UPLOADED`.
     6.  **Cleanup:** Clears the `inviteToken` to prevent reuse.
   - **Returns:** The updated candidate object.
+
+### Auth Service (`src/services/auth.service.js`)
+
+- **`linkUserToEmployee(supertokensId)`**
+  - **Security:** automatically deletes the SuperTokens user if no matching Employee is found or if the Employee is inactive. This prevents unauthorized users from maintaining a valid session.
+  - **Idempotency:** Checks if the `supertokensId` is already linked to avoid unnecessary database writes.
 
 ### Utility Functions
 
@@ -176,3 +206,4 @@ Allows a candidate to submit their personal details and upload documents.
     - Duplicate file detection prevents users from uploading the same file for different documents.
 4.  **Token-Based Access:** Candidate submission requires a valid, non-expired invite token.
 5.  **Domain Restriction:** HR invites are restricted to specific email domains to prevent unauthorized access.
+6.  **Active Employee Check:** The `isActive` flag in the `Employee` table serves as a kill switch. If set to `false` (termination/resignation), the user's SuperTokens session is revoked and their account deleted upon the next login attempt.

@@ -10,8 +10,8 @@ const multerFields = upload.fields([
     { name: 'profilePhoto', maxCount: 1 },
     { name: 'tenthMarksheet', maxCount: 1 },
     { name: 'twelfthMarksheet', maxCount: 1 },
-    { name: 'collegecertificate'},
-    { name: 'skilledcertificate'},
+    { name: 'collegecertificate', maxCount: 5 },
+    { name: 'skilledcertificate', maxCount: 5 },
     { name : 'passport', maxCount: 1 }
 ]);
 

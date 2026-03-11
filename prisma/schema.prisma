@@ -12,7 +12,7 @@ datasource db {
 // -------------------------------------------------------------
 model OnboardingCandidate {
   id                  String   @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Basic Identity
   personalEmail       String   @unique
   phoneNumber         String?  @unique
@@ -21,8 +21,8 @@ model OnboardingCandidate {
   emergencyContact    String?
   bloodGroup          String?
   photoUrl            String?
-  jobTier             JobTier  @default(SKILLED) 
-  
+  jobTier             JobTier  @default(SKILLED)
+
   // Government IDs
   aadharNumber        String?
   aadharHash          String?
@@ -30,79 +30,126 @@ model OnboardingCandidate {
   panNumber           String?
   panHash             String?
   panUrl              String?
-  passportUrl         String?  // <-- Add this back in!
-  
+  passportUrl         String?
+
   // Statutory & Fresher Check
-  isFirstTimeEmployee Boolean  @default(true) // Checkbox to bypass experience uploads
-  uanNumber           String?                 // Universal Account Number for PF
+  isFirstTimeEmployee Boolean  @default(true)
+  uanNumber           String?
 
   // Academic Documents (URIs)
   tenthCertUrl        String?
   twelfthCertUrl      String?
-  degreeCertUrls      String[] // Array for UG/PG/Diploma
+  degreeCertUrls      String[]
   skillCertUrls       String[]
-  
-  // ---------------------------------------------------------
-  // THE EXPERIENCE VAULT (For non-freshers)
-  // ---------------------------------------------------------
-  totalClaimedExperience Float?   // e.g., 4.5 years
-  
-  // Immediate Past Employment (CTC Mapping)
-  pastOfferLetterUrl     String?  
-  incrementLetterUrls    String[] // Array for all subsequent hikes
-  
-  // Comprehensive Record (BGV)
-  relievingLetterUrls    String[] // From ALL prior organizations
-  
+
+  // The Experience Vault (For non-freshers)
+  totalClaimedExperience Float?
+  pastOfferLetterUrl     String?
+  incrementLetterUrls    String[]
+  relievingLetterUrls    String[]
+
   // Financials & TDS
-  salarySlipUrls         String[] // Last 3 months
-  bankStatementUrl       String?  // 1-year statement
-  form16Url              String?  // Crucial for current FY TDS
-  
-  // ---------------------------------------------------------
-  // POST-OFFER COMPLIANCE
-  // ---------------------------------------------------------
-  // Phase 3: Resignation
-  resignationProofUrl    String?  // Acceptance email from current employer
-  
-  // Phase 5: Corporate Banking
+  salarySlipUrls         String[]
+  bankStatementUrl       String?
+  form16Url              String?
+
+  // Post-Offer Compliance
+  resignationProofUrl    String?
+
+  // Corporate Banking
   bankAccountNumber      String?
   bankIfscCode           String?
-  
-  // ---------------------------------------------------------
-  // SECURITY & STATE MACHINE
-  // ---------------------------------------------------------
+
+  // Security & State Machine
   onboardingStatus    OnboardingStatus @default(INVITE_SENT)
   inviteToken         String?
   tokenExpiry         DateTime?
-  
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
 
 // -------------------------------------------------------------
-// TABLE 2: THE FINANCIAL LEDGER (Active Employees Only)
+// TABLE 2: PERMISSIONS (Atomic capabilities — seeded, never runtime-created)
 // -------------------------------------------------------------
-model Employee {
-  id               String   @id @default(auto()) @map("_id") @db.ObjectId
-  authId           String   @unique 
-  phoneNumber      String   @unique
-  companyEmail     String   @unique
-  onboardingStatus String   @default("ACTIVE")
-  
-  createdAt        DateTime @default(now())
+// key   → what your code checks:  hasPermission("LEAVE_APPROVE")
+// label → what HR sees in the role-builder UI: "Approve Leaves"
+// module → groups permissions in the UI: "LEAVE", "PAYROLL", etc.
+model Permission {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  key    String @unique
+  label  String
+  module String
+
+  // Many-to-many with Role (Prisma MongoDB: stored as ID arrays on both sides)
+  roleIds String[] @db.ObjectId
+  roles   Role[]   @relation(fields: [roleIds], references: [id])
 }
 
 // -------------------------------------------------------------
-// ENUMS (Strict Phase Tracking)
+// TABLE 3: ROLES (Bundles of permissions — system-seeded + HR-created custom)
+// -------------------------------------------------------------
+// isSystem: true  → cannot be deleted or renamed (Admin, HR, Employee, etc.)
+// isSystem: false → HR-created custom roles ("Senior Recruiter", "Payroll Analyst")
+model Role {
+  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  name     String  @unique
+  isSystem Boolean @default(false)
+
+  // Many-to-many with Permission
+  permissionIds String[]     @db.ObjectId
+  permissions   Permission[] @relation(fields: [permissionIds], references: [id])
+
+  employees Employee[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -------------------------------------------------------------
+// TABLE 4: EMPLOYEE (Active employees — post-onboarding)
+// -------------------------------------------------------------
+model Employee {
+  id            String  @id @default(auto()) @map("_id") @db.ObjectId
+  supertokensId String? @unique  // null until their first login, then attached
+  phoneNumber   String  @unique
+  companyEmail  String? @unique
+  firstName     String
+  lastName      String
+  designation   String  // Job title: "Software Engineer", "Talent Acquisition"
+
+  // Role (one role covers 99% of employees — 1-click assignment)
+  roleId String   @db.ObjectId
+  role   Role     @relation(fields: [roleId], references: [id])
+
+  // Termination switch — set to false when employee resigns or is fired
+  // Checked on every login attempt — revokes access without deleting the record
+  isActive Boolean @default(true)
+
+  // Per-employee overrides for the 1% edge case
+  // e.g., a PM who needs PAYROLL_VIEW without being a Finance Manager
+  grantedPermissions String[] @default([])  // extra permissions on top of role
+  revokedPermissions String[] @default([])  // permissions stripped from role
+
+  // Org hierarchy (self-relation — who reports to whom)
+  managerId    String?   @db.ObjectId
+  manager      Employee?  @relation("ReportingLine", fields: [managerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subordinates Employee[] @relation("ReportingLine")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// -------------------------------------------------------------
+// ENUMS
 // -------------------------------------------------------------
 enum OnboardingStatus {
   INVITE_SENT           // Link generated by HR
   DOCS_UPLOADED         // Candidate uploaded Aadhar, PAN, Form 16, etc.
-  OFFER_ROLLED          // HR validated docs & UP Labor Laws, sent offer
+  OFFER_ROLLED          // HR validated docs, sent offer
   OFFER_ACCEPTED        // Candidate accepted within 48 hours
-  RESIGNATION_VERIFIED  // RM/HR approved the resignation proof
-  BGV_CLEARED           // IDfy/Manual checks passed
+  RESIGNATION_VERIFIED  // RM/HR approved resignation proof
+  BGV_CLEARED           // Background verification passed
   BANK_DETAILS_SUBMITTED// Penny drop verified
   ACTIVE                // Transitioned to Employee Master
   REJECTED              // Failed at any stage

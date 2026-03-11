@@ -3,15 +3,15 @@ const fs = require('fs');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 
-// These are business logic errors we throw intentionally — they get WARN, not ERROR
-const KNOWN_ERRORS = new Set([
+// Business logic errors we throw intentionally — logged as WARN, not ERROR
+const KNOWN_ERROR_CODES = new Set([
     'DUPLICATE_FILE',
     'DUPLICATE_GOVT_ID',
     'ALREADY_SUBMITTED',
-    'Invalid Invite Token.',
-    'Token Expired.',
-    'Invalid Aadhar Format. Must be exactly 12 digits.',
-    'Invalid PAN Format. It must match this format ABCDE1234F.',
+    'INVALID_TOKEN',
+    'TOKEN_EXPIRED',
+    'INVALID_AADHAR',
+    'INVALID_PAN',
 ]);
 
 const generateFileHash = (filePath) => {
@@ -44,17 +44,23 @@ const submitCandidateDetails = async (req, res) => {
         const panRegex = /^[A-Z]{5}\d{4}[A-Z]{1}$/;
 
         if (cleanAadhar && !aadharRegex.test(cleanAadhar)) {
-            throw new Error("Invalid Aadhar Format. Must be exactly 12 digits.");
+            const err = new Error("Invalid Aadhar Format. Must be exactly 12 digits.");
+            err.code = 'INVALID_AADHAR';
+            throw err;
         }
         if (cleanPan && !panRegex.test(cleanPan)) {
-            throw new Error("Invalid PAN Format. It must match this format ABCDE1234F.");
+            const err = new Error("Invalid PAN Format. It must match this format ABCDE1234F.");
+            err.code = 'INVALID_PAN';
+            throw err;
         }
 
         const seenHashes = new Set();
         for (const file of allUploadedFiles) {
             const fileHash = generateFileHash(file.path);
             if (seenHashes.has(fileHash)) {
-                throw new Error("DUPLICATE_FILE");
+                const err = new Error("Duplicate file detected.");
+                err.code = 'DUPLICATE_FILE';
+                throw err;
             }
             seenHashes.add(fileHash);
         }
@@ -87,6 +93,7 @@ const submitCandidateDetails = async (req, res) => {
         });
 
     } catch (error) {
+        // Clean up any uploaded files on any failure
         allUploadedFiles.forEach(file => {
             if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
         });
@@ -95,11 +102,11 @@ const submitCandidateDetails = async (req, res) => {
             ? `${req.body.inviteToken.substring(0, 8)}***`
             : 'MISSING_TOKEN';
 
-        if (KNOWN_ERRORS.has(error.message)) {
+        if (KNOWN_ERROR_CODES.has(error.code)) {
             logger.warn({
                 correlationId: req.correlationId,
                 maskedToken,
-                reason: error.message,
+                reason: error.code,
             }, 'Candidate submission rejected');
         } else {
             logger.error({
@@ -109,28 +116,37 @@ const submitCandidateDetails = async (req, res) => {
             }, 'Candidate submission failed — unexpected error');
         }
 
-        if (error.message === 'DUPLICATE_FILE') {
+        if (error.code === 'DUPLICATE_FILE') {
             return res.status(400).json({
                 error: 'Duplicate File Detected: You uploaded the exact same file for multiple different documents.',
                 supportCode: req.correlationId,
             });
         }
-
-        if (error.message === 'DUPLICATE_GOVT_ID') {
+        if (error.code === 'DUPLICATE_GOVT_ID') {
             return res.status(409).json({
                 error: 'Identity Conflict: This Aadhar or PAN number is already registered in our system.',
                 supportCode: req.correlationId,
             });
         }
-
-        if (error.message === 'ALREADY_SUBMITTED') {
+        if (error.code === 'ALREADY_SUBMITTED') {
             return res.status(409).json({
                 error: 'Your documents have already been submitted. No further action is required.',
                 supportCode: req.correlationId,
             });
         }
+        if (error.code === 'INVALID_TOKEN') {
+            return res.status(400).json({ error: 'Invalid Invite Token.', supportCode: req.correlationId });
+        }
+        if (error.code === 'TOKEN_EXPIRED') {
+            return res.status(400).json({ error: 'Invite Token has expired.', supportCode: req.correlationId });
+        }
+        if (error.code === 'INVALID_AADHAR' || error.code === 'INVALID_PAN') {
+            return res.status(400).json({ error: error.message, supportCode: req.correlationId });
+        }
 
-        return res.status(400).json({ error: error.message, supportCode: req.correlationId });
+        // Anything that reaches here is an unexpected server error
+        // Never expose raw error.message — it may contain Prisma internals
+        return res.status(500).json({ error: 'Internal Server Error', supportCode: req.correlationId });
     }
 };
 
