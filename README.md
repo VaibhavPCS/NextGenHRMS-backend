@@ -156,12 +156,21 @@ Allows a candidate to submit their personal details and upload documents.
 - **`src/controllers/candidate.controller.js`**
   - `generateFileHash(filePath)`: Reads a file and returns its SHA-256 hash to detect duplicate uploads.
 
+- **`src/utils/logger.js`**
+  - Implements `pino` logger with rotating file transports (`pino-roll`).
+  - **Logs Directory:** `./logs/combined.log` (All logs) and `./logs/error.log` (Errors only).
+  - **Features:**
+    - **Rotation:** Files rotate daily or when size exceeds 10MB.
+    - **Redaction:** Sensitive PII (Aadhar, PAN, Passwords, Tokens) is automatically redacted from logs.
+    - **Development Mode:** Pretty-prints logs to the console using `pino-pretty`.
+
 ---
 
 ## Security & Validation
 
 1.  **PII Protection:** Sensitive data like Aadhar and PAN numbers are never stored in plain text. They are encrypted before storage.
 2.  **Blind Indexing:** To allow uniqueness checks on encrypted data, a deterministic hash (blind index) is stored.
+    - *Note:* Unique constraints on `aadharHash` and `panHash` are handled at the application level to allow for initial `null` values.
 3.  **File Validation:**
     - Size limit: 5MB.
     - Duplicate file detection prevents users from uploading the same file for different documents.

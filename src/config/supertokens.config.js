@@ -18,7 +18,48 @@ const initializeSupertokens = () => {
         recipeList: [
             Passwordless.init({
                 contactMethod: "PHONE",
-                flowType: "USER_INPUT_CODE", 
+                flowType: "USER_INPUT_CODE",
+                override: {
+                    apis: (originalImplementation) => {
+                        return {
+                            ...originalImplementation,
+                            consumeCodePOST: async (input) => {
+                                const result = await originalImplementation.consumeCodePOST(input);
+
+                                if (result.status === "INCORRECT_USER_INPUT_CODE_ERROR") {
+                                    input.options.res.setStatusCode(401);
+                                    input.options.res.sendJSONResponse({
+                                        status: "INCORRECT_USER_INPUT_CODE_ERROR",
+                                        error: "Incorrect OTP. Please try again.",
+                                        failedCodeInputAttemptCount: result.failedCodeInputAttemptCount,
+                                        maximumCodeInputAttempts: result.maximumCodeInputAttempts,
+                                    });
+                                    return result;
+                                }
+
+                                if (result.status === "EXPIRED_USER_INPUT_CODE_ERROR") {
+                                    input.options.res.setStatusCode(401);
+                                    input.options.res.sendJSONResponse({
+                                        status: "EXPIRED_USER_INPUT_CODE_ERROR",
+                                        error: "OTP has expired. Please request a new one.",
+                                    });
+                                    return result;
+                                }
+
+                                if (result.status === "RESTART_FLOW_ERROR") {
+                                    input.options.res.setStatusCode(400);
+                                    input.options.res.sendJSONResponse({
+                                        status: "RESTART_FLOW_ERROR",
+                                        error: "Session expired or OTP attempts exhausted. Please request a new OTP.",
+                                    });
+                                    return result;
+                                }
+
+                                return result;
+                            },
+                        };
+                    },
+                },
                 smsDelivery: {
                     override: (originalImplementation) => {
                         return {

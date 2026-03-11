@@ -8,7 +8,7 @@ const submitCandidateDetails = async (
 ) => {
 
     // 1. The Token Verification
-    const candidate = await prisma.onboardingCandidate.findUnique({
+    const candidate = await prisma.onboardingCandidate.findFirst({
         where: { inviteToken: inviteToken }
     });
     if (!candidate) throw new Error("Invalid Invite Token.");

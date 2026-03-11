@@ -1,45 +1,97 @@
 const hrService = require('../services/hr.service');
+const logger = require('../utils/logger');
 
 const inviteCandidate = async (req, res) => {
     try {
         const { personalEmail, firstName, lastName, phoneNumber } = req.body;
+
         if (!personalEmail || !phoneNumber) {
-            return res.status(400).json({ error: "Email and Phone Number are strictly required." });
+            logger.warn({
+                correlationId: req.correlationId,
+                reason: 'MISSING_REQUIRED_FIELDS',
+            }, 'Invite validation failed');
+            return res.status(400).json({ error: 'Email and Phone Number are strictly required.' });
         }
+
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         const phoneRegex = /^\+91[6-9]\d{9}$/;
 
         if (!phoneRegex.test(phoneNumber)) {
+            logger.warn({
+                correlationId: req.correlationId,
+                reason: 'INVALID_PHONE_FORMAT',
+            }, 'Invite validation failed');
             return res.status(400).json({
-                error: "Invalid Phone Format. Must be a valid 10-digit Indian mobile number starting with +91."
+                error: 'Invalid Phone Format. Must be a valid 10-digit Indian mobile number starting with +91.',
             });
         }
 
         if (!emailRegex.test(personalEmail)) {
-            return res.status(400).json({ error: "Invalid Email Format." });
+            logger.warn({
+                correlationId: req.correlationId,
+                reason: 'INVALID_EMAIL_FORMAT',
+            }, 'Invite validation failed');
+            return res.status(400).json({ error: 'Invalid Email Format.' });
         }
+
         const extractedDomain = personalEmail.split('@')[1].toLowerCase();
-        const allowedDomainsString = process.env.ALLOWED_EMAIL_DOMAINS;
-        const allowedDomains = allowedDomainsString.split(',');
+        const allowedDomains = process.env.ALLOWED_EMAIL_DOMAINS.split(',');
 
         if (!allowedDomains.includes(extractedDomain)) {
-            return res.status(403).json({
-                error: `Invalid Email. Use a verified domain.`
+            logger.warn({
+                correlationId: req.correlationId,
+                reason: 'BLOCKED_EMAIL_DOMAIN',
+                domain: extractedDomain,
+            }, 'Invite validation failed');
+            return res.status(403).json({ error: 'Invalid Email. Use a verified domain.' });
+        }
+
+        const { token, candidateId } = await hrService.stageCandidate(personalEmail, firstName, lastName, phoneNumber);
+        const magicLink = `${process.env.FRONTEND_URL}/onboard?token=${token}`;
+
+        // candidateId is the DB record ID — NOT email/phone (those are PII)
+        // Support team: copy this ID from Grafana → paste in admin dashboard → get contact info
+        logger.info({
+            correlationId: req.correlationId,
+            candidateId,
+            event: 'INVITE_SENT',
+        }, 'State transition: INVITE_SENT');
+
+        return res.status(200).json({
+            status: 'INVITE_SENT',
+            message: 'Candidate invited successfully.',
+            link: magicLink,
+        });
+
+    } catch (error) {
+        if (error.message === 'CANDIDATE_ALREADY_ONBOARDED') {
+            logger.warn({
+                correlationId: req.correlationId,
+                reason: 'CANDIDATE_ALREADY_ONBOARDED',
+            }, 'Invite rejected — candidate already onboarded');
+            return res.status(409).json({
+                error: 'This candidate has already completed onboarding.',
+                supportCode: req.correlationId,
             });
         }
-        const token = await hrService.stageCandidate(personalEmail, firstName, lastName, phoneNumber);
-        const magicLink = `${process.env.FRONTEND_URL}/onboard?token=${token}`;
-        return res.status(200).json({
-            status: "INVITE_SENT",
-            message: "Candidate invited successfully.",
-            link: magicLink
-        });
-    } catch (error) {
-        console.error("Error generating invite:", error);
-        if (error.code === 'P2002') {
-            return res.status(409).json({ error: "Candidate with this Email or Phone already exists." });
+
+        if (error.message === 'ACTIVE_INVITE_EXISTS') {
+            logger.warn({
+                correlationId: req.correlationId,
+                reason: 'ACTIVE_INVITE_EXISTS',
+            }, 'Invite rejected — active invite already exists');
+            return res.status(409).json({
+                error: 'An active invite already exists for this candidate. Wait for it to expire before re-inviting.',
+                supportCode: req.correlationId,
+            });
         }
-        return res.status(500).json({ error: "Internal Server Error" });
+
+        logger.error({
+            correlationId: req.correlationId,
+            err: error,
+        }, 'Invite generation failed — unexpected error');
+
+        return res.status(500).json({ error: 'Internal Server Error', supportCode: req.correlationId });
     }
 };
 

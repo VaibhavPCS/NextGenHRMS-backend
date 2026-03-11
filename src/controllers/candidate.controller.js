@@ -1,6 +1,18 @@
 const CandidateService = require('../services/candidate.service');
 const fs = require('fs');
 const crypto = require('crypto');
+const logger = require('../utils/logger');
+
+// These are business logic errors we throw intentionally — they get WARN, not ERROR
+const KNOWN_ERRORS = new Set([
+    'DUPLICATE_FILE',
+    'DUPLICATE_GOVT_ID',
+    'ALREADY_SUBMITTED',
+    'Invalid Invite Token.',
+    'Token Expired.',
+    'Invalid Aadhar Format. Must be exactly 12 digits.',
+    'Invalid PAN Format. It must match this format ABCDE1234F.',
+]);
 
 const generateFileHash = (filePath) => {
     const fileBuffer = fs.readFileSync(filePath);
@@ -17,6 +29,14 @@ const submitCandidateDetails = async (req, res) => {
 
     try {
         const { inviteToken, emergencyContact, bloodGroup, aadharNumber, panNumber } = req.body;
+        const maskedToken = inviteToken ? `${inviteToken.substring(0, 8)}***` : 'MISSING_TOKEN';
+
+        logger.info({
+            correlationId: req.correlationId,
+            maskedToken,
+            event: 'SUBMISSION_STARTED',
+        }, 'Candidate submission initiated');
+
         const cleanAadhar = aadharNumber ? aadharNumber.replace(/[\s-]/g, '') : null;
         const cleanPan = panNumber ? panNumber.toUpperCase().trim() : null;
 
@@ -33,9 +53,8 @@ const submitCandidateDetails = async (req, res) => {
         const seenHashes = new Set();
         for (const file of allUploadedFiles) {
             const fileHash = generateFileHash(file.path);
-            
             if (seenHashes.has(fileHash)) {
-                throw new Error("DUPLICATE_FILE"); 
+                throw new Error("DUPLICATE_FILE");
             }
             seenHashes.add(fileHash);
         }
@@ -50,39 +69,68 @@ const submitCandidateDetails = async (req, res) => {
         const passportUrl = req.files?.passport?.[0]?.path || null;
 
         const updatedCandidate = await CandidateService.submitCandidateDetails(
-            inviteToken, emergencyContact, bloodGroup, cleanAadhar, cleanPan, 
-            profilePhotoUrl, aadharUrl, panUrl, tenthUrl, twelfthUrl, 
+            inviteToken, emergencyContact, bloodGroup, cleanAadhar, cleanPan,
+            profilePhotoUrl, aadharUrl, panUrl, tenthUrl, twelfthUrl,
             degreeCertUrls, skillCertUrls, passportUrl
         );
 
+        logger.info({
+            correlationId: req.correlationId,
+            candidateId: updatedCandidate.id,
+            event: 'DOCS_UPLOADED',
+        }, 'State transition: DOCS_UPLOADED');
+
         return res.status(200).json({
-            status: "DOCS_UPLOADED",
-            message: "Candidate documents uploaded successfully.",
-            candidate: updatedCandidate
+            status: 'DOCS_UPLOADED',
+            message: 'Candidate documents uploaded successfully.',
+            candidate: updatedCandidate,
         });
 
     } catch (error) {
         allUploadedFiles.forEach(file => {
-            if (fs.existsSync(file.path)) {
-                fs.unlinkSync(file.path);
-            }
+            if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
         });
 
-        console.error("Error in Candidate Submission:", error.message);
+        const maskedToken = req.body?.inviteToken
+            ? `${req.body.inviteToken.substring(0, 8)}***`
+            : 'MISSING_TOKEN';
 
-        if (error.message === "DUPLICATE_FILE") {
-            return res.status(400).json({ 
-                error: "Duplicate File Detected: You uploaded the exact same file for multiple different documents." 
+        if (KNOWN_ERRORS.has(error.message)) {
+            logger.warn({
+                correlationId: req.correlationId,
+                maskedToken,
+                reason: error.message,
+            }, 'Candidate submission rejected');
+        } else {
+            logger.error({
+                correlationId: req.correlationId,
+                maskedToken,
+                err: error,
+            }, 'Candidate submission failed — unexpected error');
+        }
+
+        if (error.message === 'DUPLICATE_FILE') {
+            return res.status(400).json({
+                error: 'Duplicate File Detected: You uploaded the exact same file for multiple different documents.',
+                supportCode: req.correlationId,
             });
         }
-        
-        if (error.message === "DUPLICATE_GOVT_ID") {
-            return res.status(409).json({ 
-                error: "Identity Conflict: This Aadhar or PAN number is already registered in our system." 
+
+        if (error.message === 'DUPLICATE_GOVT_ID') {
+            return res.status(409).json({
+                error: 'Identity Conflict: This Aadhar or PAN number is already registered in our system.',
+                supportCode: req.correlationId,
             });
         }
 
-        return res.status(400).json({ error: error.message });
+        if (error.message === 'ALREADY_SUBMITTED') {
+            return res.status(409).json({
+                error: 'Your documents have already been submitted. No further action is required.',
+                supportCode: req.correlationId,
+            });
+        }
+
+        return res.status(400).json({ error: error.message, supportCode: req.correlationId });
     }
 };
 

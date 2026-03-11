@@ -25,10 +25,10 @@ model OnboardingCandidate {
   
   // Government IDs
   aadharNumber        String?
-  aadharHash          String?  @unique 
+  aadharHash          String?
   aadharUrl           String?
   panNumber           String?
-  panHash             String?  @unique 
+  panHash             String?
   panUrl              String?
   passportUrl         String?  // <-- Add this back in!
   
@@ -73,7 +73,7 @@ model OnboardingCandidate {
   // SECURITY & STATE MACHINE
   // ---------------------------------------------------------
   onboardingStatus    OnboardingStatus @default(INVITE_SENT)
-  inviteToken         String?  @unique
+  inviteToken         String?
   tokenExpiry         DateTime?
   
   createdAt           DateTime @default(now())

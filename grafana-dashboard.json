@@ -1,0 +1,39 @@
+{
+  "title": "NextGenHRMS: Live Audit Trail",
+  "tags": ["nextgen-hrms", "logs", "security"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "panels": [
+    {
+      "type": "logs",
+      "title": "Encrypted Ingestion Pipeline Stream",
+      "gridPos": { "h": 20, "w": 24, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{app=\"nextgen-hrms\"} | json | line_format `▶ [{{if eq .level \"30\"}}info{{else if eq .level \"40\"}}warn{{else if eq .level \"50\"}}error{{else if eq .level \"20\"}}debug{{else if eq .level \"60\"}}fatal{{else}}{{.level}}{{end}}] {{.msg}}{{if .reason}} | Reason: {{.reason}}{{end}}{{if .event}} | Event: {{.event}}{{end}} | Trace: {{.correlationId}}`",
+          "refId": "A",
+          "queryType": "range",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}
